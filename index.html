@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Python Runner</title>
+    <script src="https://cdn.jsdelivr.net/pyodide/v0.26.2/full/pyodide.js"></script>
+    <style>
+        body { font-family: monospace; background: #181818; color: #fff; padding: 20px; }
+        #output { border: 1px solid #444; padding: 10px; min-height: 100px; white-space: pre-wrap; }
+    </style>
+</head>
+<body>
+    <h3>Результат выполнения:</h3>
+    <div id="output">Загрузка интерпретатора...</div>
+    <script>
+        async function main() {
+            let pyodide = await loadPyodide();
+            const urlParams = new URLSearchParams(window.location.search);
+            const code = atob(urlParams.get('code')); // Декодируем код из ссылки
+            try {
+                pyodide.runPython("import sys, io; sys.stdout = io.StringIO()");
+                pyodide.runPython(code);
+                document.getElementById('output').innerText = pyodide.runPython("sys.stdout.getvalue()");
+            } catch (err) {
+                document.getElementById('output').innerText = err;
+            }
+        }
+        main();
+    </script>
+</body>
+</html>
