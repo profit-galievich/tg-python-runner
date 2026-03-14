@@ -1,36 +1,149 @@
 <!DOCTYPE html>
-<html>
+<html lang="ru">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Python Runner</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script src="https://cdn.jsdelivr.net/pyodide/v0.26.2/full/pyodide.js"></script>
     <style>
-        body { background: #000; color: #0f0; font-family: monospace; padding: 20px; }
-        #out { white-space: pre-wrap; }
+        body {
+            font-family: monospace;
+            background: var(--tg-theme-bg-color, #121212);
+            color: var(--tg-theme-text-color, #00ff00);
+            padding: 16px;
+            margin: 0;
+            font-size: 14px;
+            line-height: 1.4;
+        }
+        #output {
+            border: 1px solid var(--tg-theme-hint-color, #333);
+            padding: 12px;
+            background: var(--tg-theme-secondary-bg-color, #000);
+            min-height: 200px;
+            white-space: pre-wrap;
+            border-radius: 8px;
+            margin-top: 10px;
+            font-size: 13px;
+        }
+        .status {
+            color: var(--tg-theme-link-color, #0088cc);
+            margin-bottom: 10px;
+            font-weight: bold;
+        }
+        .error { color: #ff6b6b; }
+        .success { color: #51cf66; }
+        #loader {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255,255,255,.3);
+            border-radius: 50%;
+            border-top-color: var(--tg-theme-link-color);
+            animation: spin 1s ease-in-out infinite;
+            margin-right: 8px;
+            vertical-align: middle;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
     </style>
 </head>
 <body>
-    <div id="out">Запуск интерпретатора...</div>
-    <script>
-        async function run() {
-            const out = document.getElementById('out');
-            try {
-                let pyodide = await loadPyodide();
-                const params = new URLSearchParams(window.location.search);
-                let code = params.get('code');
-                
-                // Декодируем URL-безопасный Base64
-                code = code.replace(/-/g, '+').replace(/_/g, '/');
-                while (code.length % 4) code += '=';
-                code = atob(code);
+    <h3>🐍 Результат выполнения:</h3>
+    <div class="status" id="status"><span id="loader"></span>Загрузка Pyodide...</div>
+    <div id="output"></div>
 
-                pyodide.runPython("import sys, io; sys.stdout = io.StringIO()");
-                await pyodide.runPythonAsync(code);
-                out.innerText = pyodide.runPython("sys.stdout.getvalue()");
-            } catch (e) {
-                out.innerText = "Ошибка: " + e;
+    <script>
+        // === Telegram WebApp ===
+        if (window.Telegram?.WebApp) {
+            Telegram.WebApp.ready();
+            Telegram.WebApp.expand();
+            Telegram.WebApp.enableClosingConfirmation();
+            // Адаптация цветов под тему ТГ
+            document.documentElement.style.setProperty('--tg-bg', Telegram.WebApp.backgroundColor);
+            document.documentElement.style.setProperty('--tg-text', Telegram.WebApp.textColor);
+        }
+
+        // === Правильное декодирование base64 → UTF-8 ===
+        function base64ToUtf8(base64) {
+            // Заменяем URL-safe символы обратно на стандартные base64
+            base64 = base64.replace(/-/g, '+').replace(/_/g, '/');
+            // Добавляем паддинг, если нужно
+            const pad = base64.length % 4;
+            if (pad) base64 += '='.repeat(4 - pad);
+            
+            const binary = atob(base64);
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) {
+                bytes[i] = binary.charCodeAt(i);
+            }
+            return new TextDecoder('utf-8').decode(bytes);
+        }
+
+        async function main() {
+            const output = document.getElementById('output');
+            const status = document.getElementById('status');
+            const loader = document.getElementById('loader');
+            
+            try {
+                // Загрузка Pyodide
+                if (!window.pyodide) {
+                    window.pyodide = await loadPyodide();
+                }
+                status.innerHTML = '✅ Интерпретатор готов. Подготовка кода...';
+                
+                // Получение и декодирование кода
+                const urlParams = new URLSearchParams(window.location.search);
+                const encodedCode = urlParams.get('code');
+                
+                if (!encodedCode) {
+                    throw new Error("❌ Код не передан в параметре ?code=");
+                }
+
+                const code = base64ToUtf8(encodedCode);
+                status.innerHTML = '🔄 Выполнение...';
+
+                // Перехват stdout и stderr
+                window.pyodide.runPython(`
+import sys, io
+sys.stdout = io.StringIO()
+sys.stderr = sys.stdout
+                `);
+                
+                // Выполнение с таймаутом
+                const result = await Promise.race([
+                    window.pyodide.runPythonAsync(code),
+                    new Promise((_, reject) => 
+                        setTimeout(() => reject(new Error('⏱ Таймаут: код выполнялся >30 сек')), 30000)
+                    )
+                ]);
+                
+                // Получение вывода
+                let pyOutput = window.pyodide.runPython("sys.stdout.getvalue()");
+                
+                if (!pyOutput || !pyOutput.trim()) {
+                    pyOutput = "✅ Код выполнен успешно (нет вывода в консоль).";
+                }
+                
+                output.textContent = pyOutput;
+                status.className = 'status success';
+                status.textContent = '✨ Готово!';
+                loader.style.display = 'none';
+                
+            } catch (err) {
+                status.className = 'status error';
+                status.textContent = '❌ Ошибка выполнения';
+                loader.style.display = 'none';
+                
+                // Форматируем ошибку
+                let errorMsg = err.message || String(err);
+                if (errorMsg.includes('null bytes')) {
+                    errorMsg = "🔤 Ошибка кодировки! Убедитесь, что код передаётся в UTF-8.\n\n" + errorMsg;
+                }
+                output.textContent = errorMsg + "\n\n" + (err.stack || "");
             }
         }
-        run();
+        
+        main();
     </script>
 </body>
 </html>
