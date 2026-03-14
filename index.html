@@ -1,95 +1,36 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html>
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Python Runner</title>
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script src="https://cdn.jsdelivr.net/pyodide/v0.26.2/full/pyodide.js"></script>
     <style>
-        body {
-            font-family: monospace;
-            background: var(--tg-theme-bg-color, #121212);
-            color: var(--tg-theme-text-color, #00ff00);
-            padding: 16px;
-            margin: 0;
-            font-size: 14px;
-        }
-        #output {
-            border: 1px solid var(--tg-theme-hint-color, #333);
-            padding: 12px;
-            background: var(--tg-theme-secondary-bg-color, #000);
-            min-height: 200px;
-            white-space: pre-wrap;
-            border-radius: 8px;
-            margin-top: 10px;
-        }
-        .status {
-            color: var(--tg-theme-link-color, #0088cc);
-            margin-bottom: 10px;
-        }
-        .error {
-            color: #ff6b6b;
-        }
+        body { background: #000; color: #0f0; font-family: monospace; padding: 20px; }
+        #out { white-space: pre-wrap; }
     </style>
 </head>
 <body>
-    <h3>🐍 Результат выполнения:</h3>
-    <div class="status" id="status">Инициализация интерпретатора...</div>
-    <div id="output"></div>
-
+    <div id="out">Запуск интерпретатора...</div>
     <script>
-        // Инициализация Telegram WebApp
-        if (window.Telegram?.WebApp) {
-            Telegram.WebApp.ready();
-            Telegram.WebApp.expand();
-            Telegram.WebApp.enableClosingConfirmation();
-        }
-
-        async function main() {
-            const output = document.getElementById('output');
-            const status = document.getElementById('status');
-            
+        async function run() {
+            const out = document.getElementById('out');
             try {
-                status.textContent = '⏳ Загрузка Pyodide...';
                 let pyodide = await loadPyodide();
-                status.textContent = '✅ Интерпретатор готов. Запуск кода...';
+                const params = new URLSearchParams(window.location.search);
+                let code = params.get('code');
                 
-                const urlParams = new URLSearchParams(window.location.search);
-                const encodedCode = urlParams.get('code');
-                
-                if (!encodedCode) {
-                    throw new Error("Код не передан в параметре ?code=");
-                }
+                // Декодируем URL-безопасный Base64
+                code = code.replace(/-/g, '+').replace(/_/g, '/');
+                while (code.length % 4) code += '=';
+                code = atob(code);
 
-                const code = atob(encodedCode);
-                
-                // Перехват stdout
-                pyodide.runPython(`
-import sys, io
-sys.stdout = io.StringIO()
-sys.stderr = sys.stdout
-                `);
-                
-                // Выполнение с таймаутом
-                const result = await Promise.race([
-                    pyodide.runPythonAsync(code),
-                    new Promise((_, reject) => 
-                        setTimeout(() => reject(new Error('⏱ Таймаут: код выполнялся >30 сек')), 30000)
-                    )
-                ]);
-                
-                let pyOutput = pyodide.runPython("sys.stdout.getvalue()");
-                output.textContent = pyOutput || "✅ Код выполнен (нет вывода в консоль).";
-                status.textContent = '✨ Готово!';
-                
-            } catch (err) {
-                status.textContent = '❌ Ошибка';
-                status.className = 'status error';
-                output.textContent = "Ошибка выполнения:\n" + err.message + "\n\n" + (err.stack || "");
+                pyodide.runPython("import sys, io; sys.stdout = io.StringIO()");
+                await pyodide.runPythonAsync(code);
+                out.innerText = pyodide.runPython("sys.stdout.getvalue()");
+            } catch (e) {
+                out.innerText = "Ошибка: " + e;
             }
         }
-        main();
+        run();
     </script>
 </body>
 </html>
